@@ -244,3 +244,37 @@ https://github.com/Aml-Hassan-Abd-El-hamid/ai-lip-sync-app/assets/66205928/ba97d
 
 
 The only difference between the fast and slow versions of animation here is the fact that the fast version passes only a photo while the slow version passes a video instead.
+
+## Command Line Interface
+
+In addition to the Streamlit web interface, this project now includes a command-line interface that allows you to run the lip sync directly:
+
+```bash
+./run_lipsync.py --face <path_to_face_file> --audio <path_to_audio_file> [options]
+```
+
+### Required Arguments:
+- `--face`: Path to video/image file for lip sync
+- `--audio`: Path to audio file (wav or mp3)
+
+### Optional Arguments:
+- `--model`: Path to Wav2Lip model checkpoint file (default: wav2lip_checkpoints/wav2lip_gan.pth)
+- `--outfile`: Path to save the output video (default: wav2lip/results/result_voice.mp4)
+- `--slow_mode`: Use slow mode for better quality (full face animation)
+- `--resize_factor`: Reduce resolution for faster processing (default: 1)
+- `--fps`: Set output frames per second (default: same as input)
+- `--no_smooth`: Disable face detection smoothing
+
+### Video Trimming:
+The CLI also supports automatic video trimming:
+
+```bash
+./run_lipsync.py --face input.mp4 --audio speech.wav --trim --trim_start 1.5 --trim_end 10.0
+```
+
+- `--trim`: Enable video trimming
+- `--trim_start`: Start time in seconds (default: 0)
+- `--trim_end`: End time in seconds (default: end of video)
+- `--trim_output`: Path for trimmed output (default: original_trimmed.mp4)
+
+This command-line interface is particularly useful for batch processing or integration with other tools and scripts.

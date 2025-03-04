@@ -11,6 +11,10 @@ from .face_detection import FaceAlignment, LandmarksType
 import torch
 import platform
 
+# Global variables
+frame_limit = 1000  # Default frame limit, can be overridden from run_lipsync.py
+save_interval = 50  # Save partial results every N frames
+
 parser = argparse.ArgumentParser(description='Inference code to lip-sync videos in the wild using Wav2Lip models')
 
 parser.add_argument('--outfile', type=str, help='Video path to save result. See default for an e.g.', 
@@ -25,11 +29,11 @@ parser.add_argument('--pads', nargs='+', type=int, default=[0, 10, 0, 0],
 					help='Padding (top, bottom, left, right). Please adjust to include chin at least')
 
 parser.add_argument('--face_det_batch_size', type=int, 
-					help='Batch size for face detection', default=32)
-parser.add_argument('--wav2lip_batch_size', type=int, help='Batch size for Wav2Lip model(s)', default=512)
+					help='Batch size for face detection', default=16)
+parser.add_argument('--wav2lip_batch_size', type=int, help='Batch size for Wav2Lip model(s)', default=128)
 
-parser.add_argument('--resize_factor', default=1, type=int, 
-			help='Reduce the resolution by this factor. Sometimes, best results are obtained at 480p or 720p')
+parser.add_argument('--resize_factor', type=int, default=1, 
+					help='Reduce the resolution by this factor. Sometimes, best results are obtained at 480p or 720p')
 
 parser.add_argument('--crop', nargs='+', type=int, default=[0, -1, 0, -1], 
 					help='Crop video to a smaller region (top, bottom, left, right). Applied after resize_factor and rotate arg. ' 
@@ -46,18 +50,40 @@ parser.add_argument('--rotate', default=False, action='store_true',
 parser.add_argument('--nosmooth', default=False, action='store_true',
 					help='Prevent smoothing face detections over a short temporal window')
 
+parser.add_argument('--img_size', type=int, default=96, help='Size of the face thumbnail used by the model')
+
+parser.add_argument('--face', type=str, 
+					help='Filepath of video/image that contains faces to use')
+parser.add_argument('--audio', type=str, 
+					help='Filepath of video/audio file to use as raw audio source')
+parser.add_argument('--max_frames', type=int, default=1000,
+					help='Maximum number of frames to process (default: 1000)')
+parser.add_argument('--disable_partial_save', action='store_true',
+					help='Do not save partial results during processing')
+
+def parse_args():
+    """Parse command line arguments and return the args object."""
+    args = parser.parse_args()
+    return args
+
 args = parser.parse_args()
 args.img_size = 96
 
-# Check for available devices
-if torch.backends.mps.is_available():
-    device = 'mps'  # Use Apple Silicon GPU
-elif torch.cuda.is_available():
-    device = 'cuda'
-else:
-    device = 'cpu'
+# Check for available devices - will be overridden if device is passed from outside
+if not 'device' in globals():
+    if torch.cuda.is_available():
+        device = 'cuda'
+        print(f"Using {device} for inference.")
+    elif torch.backends.mps.is_available():
+        device = 'mps'  # Use Apple Silicon GPU
+        print(f"Using {device} for inference.")
+    else:
+        device = 'cpu'
+        print(f"Using {device} for inference.")
 
-print('Using {} for inference.'.format(device))
+# Print the device being used for debugging
+if 'device' in globals():
+    print(f'Device set externally to: {device}')
 
 def get_smoothened_boxes(boxes, idx):
     """Get smoothened box for a specific index"""
@@ -129,22 +155,21 @@ def face_detect(images):
             # Create default coordinates for face detection
             h, w = image.shape[:2]
             
-            # Simple and consistent face region estimation based on center of the frame
+            # Better face region estimation - center with proportional sizing
             center_x = w // 2
             center_y = h // 2
             
-            # Use about 1/3 of the frame height for face
-            face_h = h // 3
-            face_w = min(w // 2, face_h)
+            # Use about 40% of frame height for face for more accurate proportions
+            face_h = int(h * 0.4)
+            face_w = int(face_h * 0.8)  # Typical face aspect ratio
             
-            # Create a centered box
+            pady1, pady2, padx1, padx2 = args.pads
             x1 = max(0, center_x - face_w // 2 - padx1)
             y1 = max(0, center_y - face_h // 2 - pady1)
             x2 = min(w, center_x + face_w // 2 + padx2)
             y2 = min(h, center_y + face_h // 2 + pady2)
             
-            if i == 0 or i % 100 == 0:  # Log only occasionally to avoid flooding
-                print(f"Frame {i}: Using fallback face region at ({x1},{y1},{x2},{y2})")
+            print(f"Estimated face region: x1={x1}, y1={y1}, x2={x2}, y2={y2}")
             
             results.append([x1, y1, x2, y2])
             continue
@@ -176,13 +201,13 @@ def datagen(frames, mels):
 				# Create default face regions for all frames
 				h, w = frames[0].shape[:2]
 				
-				# Simple face region estimation in the center of the frame
+				# Better face region estimation - center with proportional sizing
 				center_x = w // 2
 				center_y = h // 2
 				
-				# Use about 1/3 of the frame height for face
-				face_h = h // 3
-				face_w = min(w // 2, face_h)
+				# Use about 40% of frame height for face for more accurate proportions
+				face_h = int(h * 0.4)
+				face_w = int(face_h * 0.8)  # Typical face aspect ratio
 				
 				pady1, pady2, padx1, padx2 = args.pads
 				x1 = max(0, center_x - face_w // 2 - padx1)
@@ -207,13 +232,13 @@ def datagen(frames, mels):
 				# Create default face region for static image
 				h, w = frames[0].shape[:2]
 				
-				# Simple face region estimation in the center of the frame
+				# Better face region estimation - center with proportional sizing
 				center_x = w // 2
 				center_y = h // 2
 				
-				# Use about 1/3 of the frame height for face
-				face_h = h // 3
-				face_w = min(w // 2, face_h)
+				# Use about 40% of frame height for face for more accurate proportions
+				face_h = int(h * 0.4)
+				face_w = int(face_h * 0.8)  # Typical face aspect ratio
 				
 				pady1, pady2, padx1, padx2 = args.pads
 				x1 = max(0, center_x - face_w // 2 - padx1)
@@ -305,105 +330,267 @@ mel_step_size = 16
 
 def _load(checkpoint_path):
     # Handle loading for different devices
+    global device
+    if not os.path.isfile(checkpoint_path):
+        raise FileNotFoundError(f"Checkpoint file not found: {checkpoint_path}")
+    
+    print(f"Loading model from checkpoint: {checkpoint_path}")
     checkpoint = torch.load(checkpoint_path, map_location=torch.device(device))
-    return checkpoint
+    
+    # Import the model here to avoid circular imports
+    from .models import Wav2Lip
+    
+    # Force model to the specified device
+    model = Wav2Lip()
+    
+    # Load state dict
+    if 's3fd.pth' in checkpoint_path:
+        model.load_state_dict(checkpoint)
+    else:
+        model.load_state_dict(checkpoint['state_dict'])
+    
+    model = model.to(device)
+    
+    # Set model to evaluation mode and report device
+    print(f"Model loaded and moved to {device}")
+    model.eval()
+    return model
 
+# Add helper function for moving data to device
+def to_device(tensor, dev):
+    if tensor is None:
+        return None
+    if isinstance(tensor, (list, tuple)):
+        return [to_device(t, dev) for t in tensor]
+    return tensor.to(dev, non_blocking=True)
 
 def main(face, audio, model, slow_mode=False):
-	if slow_mode:
-		print("Using SLOW animation mode (full face animation)")
+	im = cv2.imread(face)
+	if im is not None:
+		return main_from_img(face, audio, model, slow_mode=slow_mode)
 	else:
-		print("Using FAST animation mode (lips only)")
-		
-	if not os.path.isfile(face):
-		raise ValueError('--face argument must be a valid path to video/image file')
+		return main_from_video(face, audio, model, slow_mode=slow_mode)
 
-	elif face.split('.')[1] in ['jpg', 'png', 'jpeg'] and not slow_mode:
-		full_frames = [cv2.imread(face)]
-		fps = args.fps
+def main_from_video(face_video_path, audio_path, model, slow_mode=False):
+    # Create args object manually using the parse_args function we defined earlier
+    args = parse_args()
+    args.face = face_video_path
+    args.audio = audio_path
 
-	else:
-		video_stream = cv2.VideoCapture(face)
-		fps = video_stream.get(cv2.CAP_PROP_FPS)
-		
-		# Get video dimensions for potential downscaling of large videos
-		frame_width = int(video_stream.get(cv2.CAP_PROP_FRAME_WIDTH))
-		frame_height = int(video_stream.get(cv2.CAP_PROP_FRAME_HEIGHT))
-		total_frames = int(video_stream.get(cv2.CAP_PROP_FRAME_COUNT))
-		
-		# Auto-adjust resize factor for very large videos
-		original_resize_factor = args.resize_factor
-		if frame_width > 1920 or frame_height > 1080:
-			# For 4K or larger videos, use a higher resize factor
-			if frame_width >= 3840 or frame_height >= 2160:
-				args.resize_factor = max(4, args.resize_factor)
-				print(f"Auto-adjusting resize factor to {args.resize_factor} for high-resolution video")
-			# For 1080p-4K videos
-			elif frame_width > 1920 or frame_height > 1080:
-				args.resize_factor = max(2, args.resize_factor)
-				print(f"Auto-adjusting resize factor to {args.resize_factor} for high-resolution video")
+    if not os.path.isfile(args.face):
+        raise ValueError('--face argument must be a valid path to video/image file')
 
-		print('Reading video frames...')
+    # Set up output directories
+    result_dir = os.path.dirname(args.outfile)
+    os.makedirs(result_dir, exist_ok=True)
+    os.makedirs(os.path.join('wav2lip', 'temp'), exist_ok=True)
 
-		full_frames = []
-		
-		# For large videos, report progress and limit memory usage
-		frame_limit = 5000  # Maximum number of frames to process at once
-		if total_frames > frame_limit:
-			print(f"Large video detected ({total_frames} frames). Will process in chunks.")
-		
-		# Use tqdm for progress reporting
-		pbar = tqdm(total=min(total_frames, frame_limit))
-		frame_count = 0
-		
-		while frame_count < frame_limit:
-			still_reading, frame = video_stream.read()
-			if not still_reading:
-				video_stream.release()
-				break
-				
-			if args.resize_factor > 1:
-				frame = cv2.resize(frame, (frame.shape[1]//args.resize_factor, frame.shape[0]//args.resize_factor))
+    # Initialize video parameters
+    video_stream = cv2.VideoCapture(args.face)
+    fps = video_stream.get(cv2.CAP_PROP_FPS)
+    
+    # Get video dimensions for potential downscaling
+    frame_width = int(video_stream.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_height = int(video_stream.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total_frames = int(video_stream.get(cv2.CAP_PROP_FRAME_COUNT))
+    
+    # Auto-adjust resize factor for large videos
+    if frame_width > 1920 or frame_height > 1080:
+        # For 4K or larger videos, use a higher resize factor
+        if frame_width >= 3840 or frame_height >= 2160:
+            args.resize_factor = max(4, args.resize_factor)
+            print(f"Auto-adjusting resize factor to {args.resize_factor} for high-resolution video")
+        # For 1080p-4K videos
+        elif frame_width > 1920 or frame_height > 1080:
+            args.resize_factor = max(2, args.resize_factor)
+            print(f"Auto-adjusting resize factor to {args.resize_factor} for high-resolution video")
 
-			if args.rotate:
-				frame = cv2.rotate(frame, cv2.cv2.ROTATE_90_CLOCKWISE)
+    print('Reading video frames...')
+    
+    # For large videos, limit frames as needed
+    frame_limit = args.max_frames if args.max_frames > 0 else float('inf')
+    
+    # Use tqdm for progress reporting
+    full_frames = []
+    frame_count = 0
+    
+    pbar = tqdm(total=min(total_frames, frame_limit))
+    
+    while frame_count < frame_limit:
+        still_reading, frame = video_stream.read()
+        if not still_reading:
+            video_stream.release()
+            break
+            
+        if args.resize_factor > 1:
+            frame = cv2.resize(frame, (frame.shape[1]//args.resize_factor, frame.shape[0]//args.resize_factor))
 
-			y1, y2, x1, x2 = args.crop
-			if x2 == -1: x2 = frame.shape[1]
-			if y2 == -1: y2 = frame.shape[0]
+        # Crop if specified
+        y1, y2, x1, x2 = [0, -1, 0, -1]  # Default to full frame
+        if hasattr(args, 'crop') and args.crop:
+            y1, y2, x1, x2 = args.crop
+            if x2 == -1: x2 = frame.shape[1]
+            if y2 == -1: y2 = frame.shape[0]
+            frame = frame[y1:y2, x1:x2]
 
-			frame = frame[y1:y2, x1:x2]
+        full_frames.append(frame)
+        frame_count += 1
+        pbar.update(1)
 
-			full_frames.append(frame)
-			frame_count += 1
-			pbar.update(1)
+    pbar.close()
+    video_stream.release()
+    
+    # If no frames were read, exit
+    if len(full_frames) == 0:
+        print('No frames found.')
+        return None
+    
+    print(f"Processing {len(full_frames)} frames...")
+    
+    # Process audio
+    if not audio_path.endswith('.wav'):
+        print('Converting audio to wav format...')
+        temp_audio = 'wav2lip/temp/temp.wav'
+        if os.path.isfile(temp_audio):
+            os.remove(temp_audio)
+            
+        command = f'ffmpeg -y -i {audio_path} -strict -2 {temp_audio}'
+        subprocess.call(command, shell=True)
+        audio_path = temp_audio
+
+    # Get the fps and duration of the input audio
+    wav = load_wav(audio_path, 16000)
+    mel = melspectrogram(wav)
+    if np.isnan(mel.reshape(-1)).sum() > 0:
+        raise ValueError('Mel contains nan! Using a TTS voice? Add a small epsilon noise to the wav file and try again')
+    
+    mel_chunks = []
+    mel_idx_multiplier = 80./fps 
+    i = 0
+    while 1:
+        start_idx = int(i * mel_idx_multiplier)
+        if start_idx + mel_step_size > len(mel[0]):
+            mel_chunks.append(mel[:, len(mel[0]) - mel_step_size:])
+            break
+        mel_chunks.append(mel[:, start_idx : start_idx + mel_step_size])
+        i += 1
+    
+    print(f"Length of mel chunks: {len(mel_chunks)}")
+    
+    # Align audio and video frames
+    full_frames_batch = full_frames[:len(mel_chunks)]
+    
+    # Determine optimal batch size for GPU memory
+    # For Apple Silicon, we need to be more conservative with batch sizes
+    if device == 'mps':
+        # Get free memory as a rough estimate for batch size calculation
+        try:
+            # For Apple Silicon, tune batch size based on video dimensions
+            if frame_width * frame_height > 1000000:  # > ~1MP resolution
+                optimal_batch_size = 8
+            elif frame_width * frame_height > 500000:  # > ~0.5MP resolution
+                optimal_batch_size = 16
+            else:
+                optimal_batch_size = 32
+            
+            print(f"Optimized batch size for MPS: {optimal_batch_size}")
+            args.wav2lip_batch_size = optimal_batch_size
+        except:
+            print("Could not determine optimal batch size, using default")
+    
+    # Prepare for face detection
+    batch_size = args.wav2lip_batch_size
+    gen = datagen(full_frames_batch.copy(), mel_chunks)
+    
+    # Create temporary video file
+    temp_video_path = 'wav2lip/temp/result.avi'
+    
+    # Process frames in batches
+    out = None
+    all_frames = []
+    progress_bar = tqdm(total=len(mel_chunks))
+    
+    for i, (img_batch, mel_batch, frames, coords) in enumerate(gen):
+        if i == 0:
+            frame_h, frame_w = full_frames[0].shape[:-1]
+            out = cv2.VideoWriter(temp_video_path, 
+                              cv2.VideoWriter_fourcc(*'DIVX'), fps, (frame_w, frame_h))
+        
+        # Convert to tensor and move to device
+        img_batch = torch.FloatTensor(np.transpose(img_batch, (0, 3, 1, 2)))
+        mel_batch = torch.FloatTensor(np.transpose(mel_batch, (0, 3, 1, 2)))
+        
+        # Move tensors to the appropriate device
+        img_batch = to_device(img_batch, device)
+        mel_batch = to_device(mel_batch, device)
+        
+        with torch.no_grad():
+            pred = model(mel_batch, img_batch)
+        
+        # Move prediction back to CPU for numpy processing
+        pred = pred.cpu().numpy().transpose(0, 2, 3, 1) * 255.
+        
+        # Apply prediction to frames
+        for p, f, c in zip(pred, frames, coords):
+            y1, y2, x1, x2 = c
+            p = cv2.resize(p.astype(np.uint8), (x2 - x1, y2 - y1))
+            f[y1:y2, x1:x2] = p
+            
+            # Store processed frame
+            all_frames.append(f.copy())
+            
+            # Write to temp video file
+            out.write(f)
+        
+        progress_bar.update(len(img_batch))
+    
+    progress_bar.close()
+    if out is not None:
+        out.release()
+    
+    # Create final video with audio
+    command = f'ffmpeg -y -i {temp_video_path} -i {audio_path} -strict -2 -q:v 1 {args.outfile}'
+    subprocess.call(command, shell=True)
+    
+    print(f"Final video saved to {args.outfile}")
+    return args.outfile
+
+def main_from_img(face_img_path, audio_path, model, slow_mode=False):
+	# Create args object manually using the parse_args function
+	args = parse_args()
+	args.face = face_img_path
+	args.audio = audio_path
+
+	if not os.path.isfile(args.face):
+		raise ValueError('--face argument must be a valid path to image file')
+
+	# Set up output directories
+	result_dir = os.path.dirname(args.outfile)
+	os.makedirs(result_dir, exist_ok=True)
+	os.makedirs(os.path.join('wav2lip', 'temp'), exist_ok=True)
+
+	# Load the image and convert to frames
+	full_frames = [cv2.imread(args.face)]
+	fps = args.fps or 25  # Default FPS for image input
+	print(f"Using static image with FPS set to {fps}")
+
+	# Process audio
+	if not audio_path.endswith('.wav'):
+		print('Converting audio to wav format...')
+		temp_audio = 'wav2lip/temp/temp.wav'
+		if os.path.isfile(temp_audio):
+			os.remove(temp_audio)
 			
-			# For very large videos, limit frames to avoid memory issues
-			if frame_count >= frame_limit:
-				print(f"Reached frame limit of {frame_limit}. Processing this chunk.")
-				break
-		
-		pbar.close()
-		
-		# Reset resize factor to original value after processing
-		args.resize_factor = original_resize_factor
-
-	print ("Number of frames available for inference: "+str(len(full_frames)))
-
-	if not audio.endswith('.wav'):
-		print('Extracting raw audio...')
-		command = 'ffmpeg -y -i {} -strict -2 {}'.format(audio, 'temp/temp.wav')
-
+		command = f'ffmpeg -y -i {audio_path} -strict -2 {temp_audio}'
 		subprocess.call(command, shell=True)
-		audio = 'temp/temp.wav'
+		audio_path = temp_audio
 
-	wav = load_wav(audio, 16000)
+	# Get the fps and duration of the input audio
+	wav = load_wav(audio_path, 16000)
 	mel = melspectrogram(wav)
-	print(mel.shape)
-
 	if np.isnan(mel.reshape(-1)).sum() > 0:
 		raise ValueError('Mel contains nan! Using a TTS voice? Add a small epsilon noise to the wav file and try again')
-
+	
 	mel_chunks = []
 	mel_idx_multiplier = 80./fps 
 	i = 0
@@ -414,71 +601,73 @@ def main(face, audio, model, slow_mode=False):
 			break
 		mel_chunks.append(mel[:, start_idx : start_idx + mel_step_size])
 		i += 1
-
-	print("Length of mel chunks: {}".format(len(mel_chunks)))
-
-	full_frames = full_frames[:len(mel_chunks)]
-
-	batch_size = args.wav2lip_batch_size
-	gen = datagen(full_frames.copy(), mel_chunks)
-
-	# Initialize video writer outside the try block
-	out = None
-	try:
-		for i, (img_batch, mel_batch, frames, coords) in enumerate(tqdm(gen, 
-												total=int(np.ceil(float(len(mel_chunks))/args.wav2lip_batch_size)))):
-			if i == 0:
-				#model = load_model(checkpoint_path)
-				print ("Model loaded")
-
-				frame_h, frame_w = full_frames[0].shape[:-1]
-				out = cv2.VideoWriter('wav2lip/temp/result.avi', 
-										cv2.VideoWriter_fourcc(*'DIVX'), fps, (frame_w, frame_h))
-
-			img_batch = torch.FloatTensor(np.transpose(img_batch, (0, 3, 1, 2))).to(device)
-			mel_batch = torch.FloatTensor(np.transpose(mel_batch, (0, 3, 1, 2))).to(device)
-
-			with torch.no_grad():
-				pred = model(mel_batch, img_batch)
-
-			pred = pred.cpu().numpy().transpose(0, 2, 3, 1) * 255.
-			
-			for p, f, c in zip(pred, frames, coords):
-				y1, y2, x1, x2 = c
-				p = cv2.resize(p.astype(np.uint8), (x2 - x1, y2 - y1))
-
-				f[y1:y2, x1:x2] = p
-				out.write(f)
-	except Exception as e:
-		print(f"Error during processing: {str(e)}")
-		print("Attempting to save any completed frames...")
 	
-	# Save the results - only if out was initialized
+	print(f"Length of mel chunks: {len(mel_chunks)}")
+	
+	# Duplicate the image frame for each audio chunk
+	full_frames_batch = [full_frames[0] for _ in range(len(mel_chunks))]
+	
+	# Determine optimal batch size for GPU memory
+	# For Apple Silicon, use larger batches since we're duplicating a single image
+	if device == 'mps':
+		# Static images can use larger batches since the face detection is simpler
+		optimal_batch_size = 64
+		print(f"Optimized batch size for static image on MPS: {optimal_batch_size}")
+		args.wav2lip_batch_size = optimal_batch_size
+	
+	# Prepare for face detection
+	batch_size = args.wav2lip_batch_size
+	gen = datagen(full_frames_batch.copy(), mel_chunks)
+	
+	# Create temporary video file
+	temp_video_path = 'wav2lip/temp/result.avi'
+	
+	# Process frames in batches
+	out = None
+	all_frames = []
+	progress_bar = tqdm(total=len(mel_chunks))
+	
+	for i, (img_batch, mel_batch, frames, coords) in enumerate(gen):
+		if i == 0:
+			frame_h, frame_w = full_frames[0].shape[:-1]
+			out = cv2.VideoWriter(temp_video_path, 
+								cv2.VideoWriter_fourcc(*'DIVX'), fps, (frame_w, frame_h))
+		
+		# Convert to tensor and move to device
+		img_batch = torch.FloatTensor(np.transpose(img_batch, (0, 3, 1, 2)))
+		mel_batch = torch.FloatTensor(np.transpose(mel_batch, (0, 3, 1, 2)))
+		
+		# Move tensors to the appropriate device
+		img_batch = to_device(img_batch, device)
+		mel_batch = to_device(mel_batch, device)
+		
+		with torch.no_grad():
+			pred = model(mel_batch, img_batch)
+		
+		# Move prediction back to CPU for numpy processing
+		pred = pred.cpu().numpy().transpose(0, 2, 3, 1) * 255.
+		
+		# Apply prediction to frames
+		for p, f, c in zip(pred, frames, coords):
+			y1, y2, x1, x2 = c
+			p = cv2.resize(p.astype(np.uint8), (x2 - x1, y2 - y1))
+			f[y1:y2, x1:x2] = p
+			
+			# Store processed frame
+			all_frames.append(f.copy())
+			
+			# Write to temp video file
+			out.write(f)
+		
+		progress_bar.update(len(img_batch))
+	
+	progress_bar.close()
 	if out is not None:
 		out.release()
 	
-	# Convert the output video to MP4 if needed - only if the AVI exists
-	result_path = 'wav2lip/results/result_voice.mp4'
-	if os.path.exists('wav2lip/temp/result.avi'):
-		# Check if the result file is valid (has frames)
-		avi_info = os.stat('wav2lip/temp/result.avi')
-		if avi_info.st_size > 1000:  # If file is too small, it's likely empty
-			# Modified command to include the audio file
-			command = 'ffmpeg -y -i {} -i {} -c:v libx264 -preset ultrafast -c:a aac -map 0:v:0 -map 1:a:0 {}'.format(
-				'wav2lip/temp/result.avi', audio, result_path)
-			try:
-				subprocess.call(command, shell=True)
-				if os.path.exists(result_path):
-					print(f"Successfully created output video with audio at {result_path}")
-				else:
-					print(f"Error: Output video file was not created.")
-			except Exception as e:
-				print(f"Error during video conversion: {str(e)}")
-		else:
-			print(f"Warning: Output AVI file is too small ({avi_info.st_size} bytes). Face detection may have failed.")
-	else:
-		print("No output video was created. Face detection likely failed completely.")
-		# Return a default path even if no output was created
+	# Create final video with audio
+	command = f'ffmpeg -y -i {temp_video_path} -i {audio_path} -strict -2 -q:v 1 {args.outfile}'
+	subprocess.call(command, shell=True)
 	
-	# Return even if there were errors
-	return result_path
+	print(f"Final video saved to {args.outfile}")
+	return args.outfile
