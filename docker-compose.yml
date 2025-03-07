@@ -1,0 +1,43 @@
+version: '3.8'
+
+x-gpu-common: &gpu-common
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: 1
+            capabilities: [gpu]
+
+x-arm-common: &arm-common
+  platform: linux/arm64
+  deploy:
+    resources:
+      limits:
+        memory: 8G
+      reservations:
+        memory: 4G
+
+x-cpu-common: &cpu-common
+  deploy:
+    resources:
+      limits:
+        memory: 8G
+      reservations:
+        memory: 4G
+
+services:
+  lipsync:
+    build: .
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./uploads:/app/uploads
+      - ./wav2lip/results:/app/wav2lip/results
+    environment:
+      - PYTHONPATH=/app
+      - KMP_DUPLICATE_LIB_OK=TRUE
+      - ARCH=${ARCH:-cpu}
+    extends:
+      file: docker-compose.${ARCH:-cpu}.yml
+      service: config 

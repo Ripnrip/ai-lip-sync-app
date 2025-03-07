@@ -538,7 +538,7 @@ def main():
     if "imge_path" in data and "audio" in data:
         st.write("This app will automatically save your audio when you click animate.")
         save_record = st.button("save record manually")
-        st.write("With fast animation only the lips of the avatar will move, and it will take probably less than a minute for a record of about 30 seconds, but with slow animation choice, the full face of the avatar will move and it will take about 30 minutes for a record of about 30 seconds to get ready.")
+        st.write("This app uses high-quality full-face animation for the best results. Processing typically takes about 30 minutes for a 30-second video.")
         model = load_model("wav2lip_checkpoints/wav2lip_gan.pth")
         
         # Check for duration mismatches between video and audio
@@ -589,9 +589,8 @@ def main():
                                     f.write(data["audio"])
                                 st.audio(output_path)
         
-        # Animation buttons
-        fast_animate = st.button("fast animate")
-        slower_animate = st.button("slower animate")
+        # Animation button
+        animate = st.button("Start Animation")
         
         # Function to save the audio record
         def save_audio_record():
@@ -605,11 +604,11 @@ def main():
             save_audio_record()
         
         # Show previously generated results if they exist and we're not generating new ones
-        if os.path.exists('wav2lip/results/result_voice.mp4') and st.session_state.processed and not (fast_animate or slower_animate):
+        if os.path.exists('wav2lip/results/result_voice.mp4') and st.session_state.processed and not animate:
             st.video('wav2lip/results/result_voice.mp4')
             display_trim_options('wav2lip/results/result_voice.mp4')
         
-        if fast_animate:
+        if animate:
             # Automatically save the record before animation
             save_audio_record()
             
@@ -620,107 +619,6 @@ def main():
             status_placeholder.info("Preparing to process...")
             
             # Call the inference function inside a try block with progress updates at key points
-            try:
-                # Initialize a progress tracker
-                progress_steps = [
-                    (0, "Starting processing..."),
-                    (15, "Step 1/4: Loading and analyzing video frames"),
-                    (30, "Step 2/4: Performing face detection (this may take a while for long videos)"),
-                    (60, "Step 3/4: Generating lip-synced frames"),
-                    (80, "Step 4/4: Creating final video with audio"),
-                    (100, "Processing complete!")
-                ]
-                current_step = 0
-                
-                # Redirect stdout to capture progress information
-                import io
-                sys.stdout = io.StringIO()
-                
-                # Update progress for the initial step
-                progress, message = progress_steps[current_step]
-                progress_bar.progress(progress, text=f"Processing: {progress}% complete")
-                status_placeholder.info(message)
-                current_step += 1
-                
-                # Run the inference in a background thread
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    # Start the inference process
-                    future = executor.submit(inference.main, data["imge_path"], "record.wav", model)
-                    
-                    # Monitor the output for progress indicators
-                    while not future.done():
-                        captured_output = sys.stdout.getvalue()
-                        
-                        # Check for progress indicators and update UI
-                        if current_step < len(progress_steps):
-                            # Check for stage 1 completion: frames read
-                            if current_step == 1 and "Number of frames available for inference" in captured_output:
-                                progress, message = progress_steps[current_step]
-                                progress_bar.progress(progress, text=f"Processing: {progress}% complete")
-                                status_placeholder.info(message)
-                                current_step += 1
-                            # Check for stage 2 completion: face detection
-                            elif current_step == 2 and "Face detection completed successfully" in captured_output:
-                                progress, message = progress_steps[current_step]
-                                progress_bar.progress(progress, text=f"Processing: {progress}% complete")
-                                status_placeholder.info(message)
-                                current_step += 1
-                            # Check for stage 3 completion: ffmpeg started
-                            elif current_step == 3 and "ffmpeg" in captured_output:
-                                progress, message = progress_steps[current_step]
-                                progress_bar.progress(progress, text=f"Processing: {progress}% complete")
-                                status_placeholder.info(message)
-                                current_step += 1
-                        
-                        # Sleep to avoid excessive CPU usage
-                        time.sleep(0.5)
-                    
-                    try:
-                        # Get the result or propagate exceptions
-                        future.result()
-                        
-                        # Show completion
-                        progress, message = progress_steps[-1]
-                        progress_bar.progress(progress, text=f"Processing: {progress}% complete")
-                        status_placeholder.success("Lip sync complete! Your video is ready.")
-                    except Exception as e:
-                        raise e
-                
-                # Restore stdout
-                sys.stdout = sys.__stdout__
-                
-                if os.path.exists('wav2lip/results/result_voice.mp4'):
-                    st.video('wav2lip/results/result_voice.mp4')
-                    display_trim_options('wav2lip/results/result_voice.mp4')
-                    # Set processed flag to True after successful processing
-                    st.session_state.processed = True
-                    
-            except Exception as e:
-                # Restore stdout in case of error
-                sys.stdout = sys.__stdout__
-                
-                progress_placeholder.empty()
-                status_placeholder.error(f"Error during processing: {str(e)}")
-                st.error("Failed to generate video. Please try again or use a different image/audio.")
-        
-        if slower_animate:
-            # Automatically save the record before animation
-            save_audio_record()
-            
-            progress_placeholder = st.empty()
-            status_placeholder = st.empty()
-            
-            progress_bar = progress_placeholder.progress(0, text="Processing: 0% complete")
-            status_placeholder.info("Preparing to process...")
-            
-            # Derive the video path from the selected avatar
-            if data["imge_path"].endswith('.mp4'):
-                video_path = data["imge_path"]
-            else:
-                # Get the avatar video path for the selected avatar
-                avatar_list = load_avatar_videos_for_slow_animation("./data/avatars/samples")
-                video_path = avatar_list[available_avatars_for_slow.index(avatar_choice)]
-            
             try:
                 # Initialize a progress tracker
                 progress_steps = [
@@ -745,8 +643,8 @@ def main():
                 
                 # Run the inference in a background thread
                 with concurrent.futures.ThreadPoolExecutor() as executor:
-                    # Start the inference process
-                    future = executor.submit(inference.main, video_path, "record.wav", model, slow_mode=True)
+                    # Start the inference process with slow_mode=True for high quality
+                    future = executor.submit(inference.main, data["imge_path"], "record.wav", model, slow_mode=True)
                     
                     # Monitor the output for progress indicators
                     while not future.done():
@@ -795,6 +693,7 @@ def main():
                     display_trim_options('wav2lip/results/result_voice.mp4')
                     # Set processed flag to True after successful processing
                     st.session_state.processed = True
+                    
             except Exception as e:
                 # Restore stdout in case of error
                 sys.stdout = sys.__stdout__

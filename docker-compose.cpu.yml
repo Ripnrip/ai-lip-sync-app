@@ -1,0 +1,10 @@
+version: '3.8'
+
+services:
+  config:
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+        reservations:
+          memory: 4G 

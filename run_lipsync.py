@@ -251,7 +251,9 @@ def main():
     model = inference._load(args.checkpoint)
     
     # Run inference
-    output_path = inference.main(args.face, args.audio, model, slow_mode=args.slow_mode)
+    #output_path = inference.main(args.face, args.audio, model, slow_mode=args.slow_mode)
+    output_path = inference.main(args.face, args.audio, model, slow_mode=True)
+
     
     # Trim video if requested
     if args.trim and output_path and os.path.exists(output_path):
