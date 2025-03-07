@@ -119,3 +119,10 @@ uploads/
 temp/
 wav2lip/results/result_voice.mp4
 wav2lip_checkpoints/wav2lip_gan.pth
+wav2lip/test/Kazumi_46.mp4
+wav2lip/test/input_2_16.mp4
+wav2lip/results/test_result.mp4
+wav2lip/results/partial_result.mp4
+wav2lip/results/test_result_fixed.mp4
+wav2lip/results/test_result_full.mp4
+wav2lip/results/test_result_improved.mp4

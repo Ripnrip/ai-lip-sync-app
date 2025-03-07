@@ -30,7 +30,7 @@ elif torch.backends.mps.is_available():
     torch.mps.empty_cache()
     print(f"Using {device} (Apple Silicon) for inference.")
 else:
-    device = 'cpu'
+    device = 'mps'
     print(f"Using {device} for inference. No GPU detected or available.")
 
 # Make device accessible to the wav2lip module
@@ -157,7 +157,7 @@ def configure_inference_args():
     args = Args()
     
     # Set default values for inference
-    args.outfile = 'wav2lip/results/result_voice.mp4'
+    args.outfile = 'wav2lip/results/result_voice_3.mp4'
     args.static = False
     args.fps = 25.0
     args.pads = [0, 10, 0, 0]
