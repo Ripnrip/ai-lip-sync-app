@@ -9,30 +9,25 @@ A powerful application that uses AI to synchronize lip movements with audio inpu
 git clone https://github.com/yourusername/ai-lip-sync-app.git
 cd ai-lip-sync-app
 
-# Check your environment (optional)
-chmod +x check_env.sh
-./check_env.sh
+# Set up Python virtual environment (recommended)
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 
-# Choose how to run:
-
-# 1. Web App (recommended)
-chmod +x run.sh
-./run.sh
-
-# 2. CLI
-python cli.py --face input.mp4 --audio speech.wav
+# Run the app
+streamlit run app.py
 ```
 
 Then open http://localhost:8501 in your browser.
 
 ### Prerequisites
 
-- Docker and Docker Compose
-- Git
+- Python 3.12+
+- pip
 - 8GB RAM minimum (16GB recommended)
 - For GPU acceleration:
   - Apple Silicon Mac: No additional setup needed
-  - NVIDIA GPU: NVIDIA drivers and NVIDIA Container Toolkit installed
+  - NVIDIA GPU: Not supported natively, use Docker if needed
 
 ### Environment Configuration
 
@@ -44,7 +39,7 @@ cp .env.example .env
 ```
 
 Available configurations:
-- Memory limits for Docker
+- Memory limits for Docker (if using Docker)
 - Custom port for the web interface
 - Force specific architecture (CPU/GPU/ARM)
 
@@ -71,7 +66,7 @@ cd ai-lip-sync-app
 
 2. Create and activate a virtual environment:
 ```bash
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate  # On Unix/macOS
 # or
 .venv\Scripts\activate  # On Windows
