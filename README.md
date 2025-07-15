@@ -4,18 +4,24 @@ A powerful application that uses AI to synchronize lip movements with audio inpu
 
 ## Quick Start 🚀
 
+### Easiest: Automated Setup
 ```bash
 # Clone the repository
 git clone https://github.com/yourusername/ai-lip-sync-app.git
 cd ai-lip-sync-app
 
-# Set up Python virtual environment (recommended)
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+# One-step setup (creates .venv, installs dependencies)
+./setup_venv.sh
 
 # Run the app
+source .venv/bin/activate
 streamlit run app.py
+```
+
+### Or use Makefile (if you have make):
+```bash
+make setup
+make run
 ```
 
 Then open http://localhost:8501 in your browser.
